@@ -96,7 +96,7 @@ router.get("/", async (req, res) => {
     params.push(requestedBy)
   }
 
-  const rows = db.prepare(`
+  const rows = (await db.prepare(`
     SELECT r.id, r.equipmentUnitId, r.equipmentTypeId, r.requesterId, r.status,
            r.reason, r.requestedStart, r.requestedEnd, r.createdAt, r.updatedAt,
            COALESCE(et_unit.name, et.name) AS equipmentTypeName,
@@ -108,13 +108,13 @@ router.get("/", async (req, res) => {
     JOIN User u ON r.requesterId = u.id
     WHERE ${conditions.join(" ")}
     ORDER BY r.createdAt DESC
-  `).all(...params) as RentalJoinRow[]
+  `).all(...params)) as RentalJoinRow[]
 
   res.json(rows.map(toApiRental))
 })
 
 router.get("/:id", async (req, res) => {
-  const row = db.prepare(`
+  const row = (await db.prepare(`
     SELECT r.id, r.equipmentUnitId, r.equipmentTypeId, r.requesterId, r.status,
            r.reason, r.requestedStart, r.requestedEnd, r.createdAt, r.updatedAt,
            COALESCE(et_unit.name, et.name) AS equipmentTypeName,
@@ -125,16 +125,16 @@ router.get("/:id", async (req, res) => {
     JOIN EquipmentType et ON r.equipmentTypeId = et.id
     JOIN User u ON r.requesterId = u.id
     WHERE r.id = ?
-  `).get(req.params.id) as RentalJoinRow | undefined
+  `).get(req.params.id)) as RentalJoinRow | undefined
 
   if (!row) {
     res.status(404).json({ message: "Rental not found" })
     return
   }
 
-  const timeline = db.prepare(
+  const timeline = (await db.prepare(
     "SELECT message, createdAt FROM AuditLog WHERE rentalId = ? ORDER BY createdAt ASC"
-  ).all(row.id) as { message: string; createdAt: string }[]
+  ).all(row.id)) as { message: string; createdAt: string }[]
 
   const detail: ApiRentalDetail = {
     ...toApiRental(row),

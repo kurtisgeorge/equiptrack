@@ -43,13 +43,13 @@ router.get("/", async (req, res) => {
 
   let users: UserRow[]
   if (role && role !== "all") {
-    users = db
+    users = (await db
       .prepare("SELECT id, name, email, role, phoneNumber, position, avatarUrl, isAvatarIcon FROM User WHERE role = ? ORDER BY name ASC")
-      .all(mapApiRoleToPrisma(role as ApiRole)) as UserRow[]
+      .all(mapApiRoleToPrisma(role as ApiRole))) as UserRow[]
   } else {
-    users = db
+    users = (await db
       .prepare("SELECT id, name, email, role, phoneNumber, position, avatarUrl, isAvatarIcon FROM User ORDER BY name ASC")
-      .all() as UserRow[]
+      .all()) as UserRow[]
   }
 
   res.json(users.map(toUserDto))
@@ -57,9 +57,9 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const { id } = req.params
-  const targetUser = db
+  const targetUser = (await db
     .prepare("SELECT id, name, email, role, phoneNumber, position, avatarUrl, isAvatarIcon FROM User WHERE id = ?")
-    .get(id) as UserRow | undefined
+    .get(id)) as UserRow | undefined
 
   if (!targetUser) {
     return res.status(404).json({ error: "User not found." })
@@ -83,12 +83,12 @@ router.put("/:id", async (req, res) => {
 
     if (sets.length > 0) {
       params.push(id)
-      db.prepare(`UPDATE User SET ${sets.join(", ")} WHERE id = ?`).run(...params)
+      await db.prepare(`UPDATE User SET ${sets.join(", ")} WHERE id = ?`).run(...params)
     }
 
-    const updated = db
+    const updated = (await db
       .prepare("SELECT id, name, email, role, phoneNumber, position, avatarUrl, isAvatarIcon FROM User WHERE id = ?")
-      .get(id) as UserRow | undefined
+      .get(id)) as UserRow | undefined
 
     if (!updated) {
       return res.status(404).json({ error: "User not found." })
@@ -117,7 +117,7 @@ router.post("/", requireRole("admin"), async (req, res) => {
   }
 
   const normalizedEmail = email.toLowerCase().trim()
-  const existing = db.prepare("SELECT id FROM User WHERE email = ?").get(normalizedEmail)
+  const existing = await db.prepare("SELECT id FROM User WHERE email = ?").get(normalizedEmail)
   if (existing) {
     return res.status(409).json({ error: "A user with this email already exists" })
   }
@@ -126,7 +126,7 @@ router.post("/", requireRole("admin"), async (req, res) => {
     const passwordHash = await hashPassword(password)
     const id = generateId()
 
-    db.prepare(
+    await db.prepare(
       "INSERT INTO User (id, name, email, passwordHash, role, department, phoneNumber, position, isAvatarIcon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"
     ).run(
       id,
@@ -139,9 +139,9 @@ router.post("/", requireRole("admin"), async (req, res) => {
       position?.trim() ?? null,
     )
 
-    const created = db
+    const created = (await db
       .prepare("SELECT id, name, email, role, phoneNumber, position, avatarUrl, isAvatarIcon FROM User WHERE id = ?")
-      .get(id) as UserRow
+      .get(id)) as UserRow
 
     res.status(201).json(toUserDto(created))
   } catch (error) {
@@ -155,9 +155,9 @@ router.delete("/:id", async (req, res) => {
   const userReq = req as RequestWithUser
 
   try {
-    const targetUser = db
+    const targetUser = (await db
       .prepare("SELECT id, role FROM User WHERE id = ?")
-      .get(id) as { id: string; role: UserRole } | undefined
+      .get(id)) as { id: string; role: UserRole } | undefined
 
     if (!targetUser) {
       return res.status(404).json({ error: "User not found." })
@@ -167,7 +167,7 @@ router.delete("/:id", async (req, res) => {
       return res.status(403).json({ error: "Admins cannot delete other Admins." })
     }
 
-    db.prepare("DELETE FROM User WHERE id = ?").run(id)
+    await db.prepare("DELETE FROM User WHERE id = ?").run(id)
     res.status(204).send()
   } catch (error) {
     res.status(500).json({ error: "Failed to delete user." })

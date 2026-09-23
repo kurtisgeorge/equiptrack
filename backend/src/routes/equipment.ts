@@ -88,8 +88,8 @@ const UNIT_JOIN_SQL = `
   LEFT JOIN User au ON eu.assignedToUserId = au.id
 `
 
-function ensureUserExists(userId: string) {
-  return db.prepare("SELECT id FROM User WHERE id = ?").get(userId) as { id: string } | undefined
+async function ensureUserExists(userId: string) {
+  return (await db.prepare("SELECT id FROM User WHERE id = ?").get(userId)) as { id: string } | undefined
 }
 
 router.get("/alerts/maintenance", async (_req, res) => {
@@ -97,11 +97,11 @@ router.get("/alerts/maintenance", async (_req, res) => {
   const nextWeek = new Date(today)
   nextWeek.setDate(nextWeek.getDate() + 7)
 
-  const units = db.prepare(`
+  const units = (await db.prepare(`
     ${UNIT_JOIN_SQL}
     WHERE eu.isActive = 1 AND eu.nextMaintenanceDue IS NOT NULL AND eu.nextMaintenanceDue <= ?
     ORDER BY eu.nextMaintenanceDue ASC
-  `).all(nextWeek.toISOString()) as UnitJoinRow[]
+  `).all(nextWeek.toISOString())) as UnitJoinRow[]
 
   res.json({
     count: units.length,
@@ -137,20 +137,20 @@ router.get("/", async (req, res) => {
     params.push(`%${search}%`, `%${search}%`)
   }
 
-  const units = db.prepare(`
+  const units = (await db.prepare(`
     ${UNIT_JOIN_SQL}
     WHERE ${conditions.join(" AND ")}
     ORDER BY eu.createdAt DESC
-  `).all(...params) as UnitJoinRow[]
+  `).all(...params)) as UnitJoinRow[]
 
   res.json(units.map(toApiEquipment))
 })
 
 router.get("/:id", async (req, res) => {
-  const item = db.prepare(`
+  const item = (await db.prepare(`
     ${UNIT_JOIN_SQL}
     WHERE eu.id = ? AND eu.isActive = 1
-  `).get(req.params.id) as UnitJoinRow | undefined
+  `).get(req.params.id)) as UnitJoinRow | undefined
 
   if (!item) {
     res.status(404).json({ message: "Equipment not found" })
@@ -177,35 +177,35 @@ router.post("/", requireRole("admin"), async (req, res) => {
 
   const createdEquipmentId = generateId()
 
-  const runTransaction = db.transaction(() => {
-    let cat = db.prepare("SELECT id FROM EquipmentCategory WHERE code = ?").get(categoryCode) as { id: string } | undefined
+  const runTransaction = db.transaction(async () => {
+    let cat = (await db.prepare("SELECT id FROM EquipmentCategory WHERE code = ?").get(categoryCode)) as { id: string } | undefined
     if (cat) {
-      db.prepare("UPDATE EquipmentCategory SET name = ? WHERE code = ?").run(categoryName, categoryCode)
+      await db.prepare("UPDATE EquipmentCategory SET name = ? WHERE code = ?").run(categoryName, categoryCode)
     } else {
       const catId = generateId()
-      db.prepare("INSERT INTO EquipmentCategory (id, name, code) VALUES (?, ?, ?)").run(catId, categoryName, categoryCode)
+      await db.prepare("INSERT INTO EquipmentCategory (id, name, code) VALUES (?, ?, ?)").run(catId, categoryName, categoryCode)
       cat = { id: catId }
     }
 
-    let eType = db.prepare("SELECT id FROM EquipmentType WHERE code = ?").get(typeCode) as { id: string } | undefined
+    let eType = (await db.prepare("SELECT id FROM EquipmentType WHERE code = ?").get(typeCode)) as { id: string } | undefined
     if (eType) {
-      db.prepare("UPDATE EquipmentType SET name = ?, categoryId = ?, defaultMaintenanceDays = ? WHERE code = ?")
+      await db.prepare("UPDATE EquipmentType SET name = ?, categoryId = ?, defaultMaintenanceDays = ? WHERE code = ?")
         .run(typeName, cat.id, body.maintenanceIntervalDays ?? null, typeCode)
     } else {
       const typeId = generateId()
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO EquipmentType (id, name, code, categoryId, defaultMaintenanceDays)
         VALUES (?, ?, ?, ?, ?)
       `).run(typeId, typeName, typeCode, cat.id, body.maintenanceIntervalDays ?? null)
       eType = { id: typeId }
     }
 
-    const defaultLocation = db.prepare("SELECT id FROM Location ORDER BY createdAt ASC LIMIT 1").get() as { id: string } | undefined
+    const defaultLocation = (await db.prepare("SELECT id FROM Location ORDER BY createdAt ASC LIMIT 1").get()) as { id: string } | undefined
     if (!defaultLocation) {
       throw new Error("No location exists. Seed database first.")
     }
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO EquipmentUnit (id, assetTag, serialNumber, equipmentTypeId, locationId, status, lastMaintenanceAt, nextMaintenanceDue, notesSummary)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -221,11 +221,11 @@ router.post("/", requireRole("admin"), async (req, res) => {
     )
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const equipment = db.prepare(`
+  const equipment = (await db.prepare(`
     ${UNIT_JOIN_SQL} WHERE eu.id = ?
-  `).get(createdEquipmentId) as UnitJoinRow | undefined
+  `).get(createdEquipmentId)) as UnitJoinRow | undefined
 
   if (!equipment) {
     res.status(500).json({ message: "Failed to create equipment" })
@@ -236,9 +236,9 @@ router.post("/", requireRole("admin"), async (req, res) => {
 })
 
 router.put("/:id", requireRole("admin"), async (req, res) => {
-  const existing = db.prepare(`
+  const existing = (await db.prepare(`
     ${UNIT_JOIN_SQL} WHERE eu.id = ? AND eu.isActive = 1
-  `).get(req.params.id) as UnitJoinRow | undefined
+  `).get(req.params.id)) as UnitJoinRow | undefined
 
   if (!existing) {
     res.status(404).json({ message: "Equipment not found" })
@@ -254,23 +254,23 @@ router.put("/:id", requireRole("admin"), async (req, res) => {
     const typeName = (body.name ?? existing.typeName).trim()
     const typeCode = slugifyCode(typeName)
 
-    let cat = db.prepare("SELECT id FROM EquipmentCategory WHERE code = ?").get(categoryCode) as { id: string } | undefined
+    let cat = (await db.prepare("SELECT id FROM EquipmentCategory WHERE code = ?").get(categoryCode)) as { id: string } | undefined
     if (cat) {
-      db.prepare("UPDATE EquipmentCategory SET name = ? WHERE code = ?").run(categoryName, categoryCode)
+      await db.prepare("UPDATE EquipmentCategory SET name = ? WHERE code = ?").run(categoryName, categoryCode)
     } else {
       const catId = generateId()
-      db.prepare("INSERT INTO EquipmentCategory (id, name, code) VALUES (?, ?, ?)").run(catId, categoryName, categoryCode)
+      await db.prepare("INSERT INTO EquipmentCategory (id, name, code) VALUES (?, ?, ?)").run(catId, categoryName, categoryCode)
       cat = { id: catId }
     }
 
-    let eType = db.prepare("SELECT id, defaultMaintenanceDays FROM EquipmentType WHERE code = ?").get(typeCode) as
+    let eType = await db.prepare("SELECT id, defaultMaintenanceDays FROM EquipmentType WHERE code = ?").get(typeCode) as
       { id: string; defaultMaintenanceDays: number | null } | undefined
     if (eType) {
-      db.prepare("UPDATE EquipmentType SET name = ?, categoryId = ?, defaultMaintenanceDays = ? WHERE code = ?")
+      await db.prepare("UPDATE EquipmentType SET name = ?, categoryId = ?, defaultMaintenanceDays = ? WHERE code = ?")
         .run(typeName, cat.id, body.maintenanceIntervalDays ?? eType.defaultMaintenanceDays, typeCode)
     } else {
       const typeId = generateId()
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO EquipmentType (id, name, code, categoryId, defaultMaintenanceDays)
         VALUES (?, ?, ?, ?, ?)
       `).run(typeId, typeName, typeCode, cat.id, body.maintenanceIntervalDays ?? null)
@@ -309,15 +309,15 @@ router.put("/:id", requireRole("admin"), async (req, res) => {
   params.push(body.notes ?? existing.notesSummary)
 
   params.push(existing.id)
-  db.prepare(`UPDATE EquipmentUnit SET ${sets.join(", ")} WHERE id = ?`).run(...params)
+  await db.prepare(`UPDATE EquipmentUnit SET ${sets.join(", ")} WHERE id = ?`).run(...params)
 
-  const item = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(existing.id) as UnitJoinRow
+  const item = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(existing.id)) as UnitJoinRow
 
   res.json(toApiEquipment(item))
 })
 
 router.delete("/:id", requireRole("admin"), async (req, res) => {
-  const item = db.prepare("SELECT id, isActive FROM EquipmentUnit WHERE id = ?").get(req.params.id) as
+  const item = await db.prepare("SELECT id, isActive FROM EquipmentUnit WHERE id = ?").get(req.params.id) as
     { id: string; isActive: number } | undefined
 
   if (!item || !item.isActive) {
@@ -325,12 +325,12 @@ router.delete("/:id", requireRole("admin"), async (req, res) => {
     return
   }
 
-  db.prepare("UPDATE EquipmentUnit SET isActive = 0 WHERE id = ?").run(item.id)
+  await db.prepare("UPDATE EquipmentUnit SET isActive = 0 WHERE id = ?").run(item.id)
   res.status(204).end()
 })
 
 router.patch("/:id/status", requireRole("admin", "maintenance"), async (req, res) => {
-  const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as
+  const item = await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as
     { id: string } | undefined
 
   if (!item) {
@@ -346,7 +346,7 @@ router.patch("/:id/status", requireRole("admin", "maintenance"), async (req, res
     return
   }
 
-  const actor = ensureUserExists(actorUserId)
+  const actor = await ensureUserExists(actorUserId)
   if (!actor) {
     res.status(400).json({ message: "actorUserId is required" })
     return
@@ -354,25 +354,25 @@ router.patch("/:id/status", requireRole("admin", "maintenance"), async (req, res
 
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare("UPDATE EquipmentUnit SET status = ? WHERE id = ?")
+  const runTransaction = db.transaction(async () => {
+    await db.prepare("UPDATE EquipmentUnit SET status = ? WHERE id = ?")
       .run(mapApiEquipmentStatusToPrisma(status), item.id)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(generateId(), "STATUS_CHANGED", actor.id, item.id, `Status changed to ${status}`, now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const updated = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id) as UnitJoinRow
+  const updated = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id)) as UnitJoinRow
 
   res.json(toApiEquipment(updated))
 })
 
 router.post("/:id/report-issue", requireRole("field", "maintenance", "admin"), async (req, res) => {
-  const item = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ? AND eu.isActive = 1`).get(req.params.id) as UnitJoinRow | undefined
+  const item = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ? AND eu.isActive = 1`).get(req.params.id)) as UnitJoinRow | undefined
 
   if (!item) {
     res.status(404).json({ message: "Equipment not found" })
@@ -391,7 +391,7 @@ router.post("/:id/report-issue", requireRole("field", "maintenance", "admin"), a
     return
   }
 
-  const actor = ensureUserExists(actorUserId)
+  const actor = await ensureUserExists(actorUserId)
   if (!actor) {
     res.status(400).json({ message: "Invalid actorUserId" })
     return
@@ -400,7 +400,7 @@ router.post("/:id/report-issue", requireRole("field", "maintenance", "admin"), a
   const issueId = generateId()
   const now = new Date().toISOString()
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO IssueReport (id, equipmentUnitId, reportedById, title, description, severity, status, reportedAt)
     VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?)
   `).run(issueId, item.id, actor.id, title || `Issue reported: ${severity.toUpperCase()}`,
@@ -408,28 +408,28 @@ router.post("/:id/report-issue", requireRole("field", "maintenance", "admin"), a
 
   let updatedUnit = item
   if (severity.toUpperCase() === "HIGH" || severity.toUpperCase() === "CRITICAL") {
-    db.prepare("UPDATE EquipmentUnit SET status = 'OUT_OF_SERVICE' WHERE id = ?").run(item.id)
-    db.prepare(`
+    await db.prepare("UPDATE EquipmentUnit SET status = 'OUT_OF_SERVICE' WHERE id = ?").run(item.id)
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(generateId(), "STATUS_CHANGED", actor.id, item.id,
       "Status changed to OUT_OF_SERVICE due to high severity issue", now)
-    updatedUnit = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id) as UnitJoinRow
+    updatedUnit = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id)) as UnitJoinRow
   }
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, issueReportId, message, createdAt)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(generateId(), "ISSUE_REPORTED", actor.id, item.id, issueId,
     `Issue reported [${severity.toUpperCase()}]: ${description}`, now)
 
-  const issue = db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(issueId)
+  const issue = await db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(issueId)
 
   res.status(201).json({ issue, equipment: toApiEquipment(updatedUnit) })
 })
 
 router.post("/:id/checkout", async (req, res) => {
-  const item = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ? AND eu.isActive = 1`).get(req.params.id) as UnitJoinRow | undefined
+  const item = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ? AND eu.isActive = 1`).get(req.params.id)) as UnitJoinRow | undefined
 
   if (!item) {
     res.status(404).json({ message: "Equipment not found" })
@@ -457,7 +457,7 @@ router.post("/:id/checkout", async (req, res) => {
     return
   }
 
-  const actor = ensureUserExists(actorUserId)
+  const actor = await ensureUserExists(actorUserId)
   if (!actor) {
     res.status(400).json({ message: "actorUserId is required" })
     return
@@ -465,25 +465,25 @@ router.post("/:id/checkout", async (req, res) => {
 
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare("UPDATE EquipmentUnit SET status = 'CHECKED_OUT', assignedToUserId = ? WHERE id = ?")
+  const runTransaction = db.transaction(async () => {
+    await db.prepare("UPDATE EquipmentUnit SET status = 'CHECKED_OUT', assignedToUserId = ? WHERE id = ?")
       .run(actor.id, item.id)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(generateId(), "CHECKED_OUT", actor.id, item.id, "Checked out", now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const updated = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id) as UnitJoinRow
+  const updated = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id)) as UnitJoinRow
 
   res.json(toApiEquipment(updated))
 })
 
 router.post("/:id/checkin", async (req, res) => {
-  const item = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ? AND eu.isActive = 1`).get(req.params.id) as UnitJoinRow | undefined
+  const item = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ? AND eu.isActive = 1`).get(req.params.id)) as UnitJoinRow | undefined
 
   if (!item) {
     res.status(404).json({ message: "Equipment not found" })
@@ -496,7 +496,7 @@ router.post("/:id/checkin", async (req, res) => {
     return
   }
 
-  const actor = ensureUserExists(actorUserId)
+  const actor = await ensureUserExists(actorUserId)
   if (!actor) {
     res.status(400).json({ message: "actorUserId is required" })
     return
@@ -504,25 +504,25 @@ router.post("/:id/checkin", async (req, res) => {
 
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare("UPDATE EquipmentUnit SET status = 'AVAILABLE', assignedToUserId = NULL WHERE id = ?").run(item.id)
+  const runTransaction = db.transaction(async () => {
+    await db.prepare("UPDATE EquipmentUnit SET status = 'AVAILABLE', assignedToUserId = NULL WHERE id = ?").run(item.id)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(generateId(), "RETURNED", actor.id, item.id, "Checked in", now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const updated = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id) as UnitJoinRow
+  const updated = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id)) as UnitJoinRow
 
   res.json(toApiEquipment(updated))
 })
 
 // Assign (or unassign) a field worker to a piece of equipment
 router.patch("/:id/assign", requireRole("admin"), async (req, res) => {
-  const item = db.prepare("SELECT id, status FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as
+  const item = await db.prepare("SELECT id, status FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as
     { id: string; status: EquipmentStatusType } | undefined
 
   if (!item) {
@@ -540,7 +540,7 @@ router.patch("/:id/assign", requireRole("admin"), async (req, res) => {
     return
   }
 
-  const actor = ensureUserExists(actorUserId)
+  const actor = await ensureUserExists(actorUserId)
   if (!actor) {
     res.status(400).json({ message: "Invalid actorUserId" })
     return
@@ -548,7 +548,7 @@ router.patch("/:id/assign", requireRole("admin"), async (req, res) => {
 
   // If assigning, validate the target user exists
   if (assignedToUserId) {
-    const target = db.prepare("SELECT id, name FROM User WHERE id = ?").get(assignedToUserId) as
+    const target = await db.prepare("SELECT id, name FROM User WHERE id = ?").get(assignedToUserId) as
       { id: string; name: string } | undefined
     if (!target) {
       res.status(400).json({ message: "Assigned user not found" })
@@ -558,7 +558,7 @@ router.patch("/:id/assign", requireRole("admin"), async (req, res) => {
 
   const now = new Date().toISOString()
 
-  db.transaction(() => {
+  await db.transaction(async () => {
     // Determine new status when assigning/unassigning
     // Field-use statuses: CHECKED_OUT / RESERVED / OVERDUE
     // Maintenance statuses: IN_MAINTENANCE / DUE_SOON_MAINTENANCE / OUT_OF_SERVICE
@@ -567,20 +567,20 @@ router.patch("/:id/assign", requireRole("admin"), async (req, res) => {
     if (assignedToUserId && item.status === "AVAILABLE") newStatus = "CHECKED_OUT"
     if (!assignedToUserId && (item.status === "CHECKED_OUT" || item.status === "RESERVED" || item.status === "OVERDUE")) newStatus = "AVAILABLE"
 
-    db.prepare("UPDATE EquipmentUnit SET assignedToUserId = ?, status = ? WHERE id = ?")
+    await db.prepare("UPDATE EquipmentUnit SET assignedToUserId = ?, status = ? WHERE id = ?")
       .run(assignedToUserId ?? null, newStatus, item.id)
 
     const logMsg = assignedToUserId
       ? `Assigned to worker (id: ${assignedToUserId})`
       : "Assignment cleared — equipment returned to available pool"
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(generateId(), "STATUS_CHANGED", actorUserId, item.id, logMsg, now)
   })()
 
-  const updated = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id) as UnitJoinRow
+  const updated = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(item.id)) as UnitJoinRow
   res.json(toApiEquipment(updated))
 })
 
@@ -605,24 +605,24 @@ router.post("/:id/mark-serviced", requireRole("maintenance", "admin"), async (re
     return
   }
 
-  const unit = db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(req.params.id) as UnitJoinRow
+  const unit = (await db.prepare(`${UNIT_JOIN_SQL} WHERE eu.id = ?`).get(req.params.id)) as UnitJoinRow
   res.json(toApiEquipment(unit))
 })
 
 router.get("/:id/service-logs", async (req, res) => {
-  const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as { id: string } | undefined
+  const item = (await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id)) as { id: string } | undefined
 
   if (!item) {
     res.status(404).json({ message: "Equipment not found" })
     return
   }
 
-  const logs = db.prepare(`
+  const logs = (await db.prepare(`
     SELECT id, equipmentUnitId, completedAt, createdAt, description, technicianId
     FROM MaintenanceRecord
     WHERE equipmentUnitId = ?
     ORDER BY createdAt DESC
-  `).all(item.id) as {
+  `).all(item.id)) as {
     id: string; equipmentUnitId: string; completedAt: string | null;
     createdAt: string; description: string | null; technicianId: string | null
   }[]
@@ -639,7 +639,7 @@ router.get("/:id/service-logs", async (req, res) => {
 })
 
 router.post("/:id/service-logs", requireRole("maintenance", "admin"), async (req, res) => {
-  const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as { id: string } | undefined
+  const item = (await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id)) as { id: string } | undefined
 
   if (!item) {
     res.status(404).json({ message: "Equipment not found" })
@@ -655,7 +655,7 @@ router.post("/:id/service-logs", requireRole("maintenance", "admin"), async (req
     return
   }
 
-  const performer = ensureUserExists(performedByUserId)
+  const performer = await ensureUserExists(performedByUserId)
   if (!performer) {
     res.status(400).json({ message: "performedByUserId is required" })
     return
@@ -665,23 +665,23 @@ router.post("/:id/service-logs", requireRole("maintenance", "admin"), async (req
   const recordId = generateId()
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(`
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(`
       INSERT INTO MaintenanceRecord (id, equipmentUnitId, technicianId, status, trigger, title, description, completedAt, createdAt, updatedAt)
       VALUES (?, ?, ?, 'COMPLETED', 'ROUTINE', 'Service log', ?, ?, ?, ?)
     `).run(recordId, item.id, performer.id, note, completedAt, now, now)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(generateId(), "MAINTENANCE_COMPLETED", performer.id, item.id, note, now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const entry = db.prepare(
+  const entry = (await db.prepare(
     "SELECT id, equipmentUnitId, completedAt, description, technicianId FROM MaintenanceRecord WHERE id = ?"
-  ).get(recordId) as { id: string; equipmentUnitId: string; completedAt: string | null; description: string | null; technicianId: string | null }
+  ).get(recordId)) as { id: string; equipmentUnitId: string; completedAt: string | null; description: string | null; technicianId: string | null }
 
   res.status(201).json({
     id: entry.id,
@@ -693,7 +693,7 @@ router.post("/:id/service-logs", requireRole("maintenance", "admin"), async (req
 })
 
 router.post("/:id/notes", async (req, res) => {
-  const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as { id: string } | undefined
+  const item = (await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id)) as { id: string } | undefined
 
   if (!item) {
     res.status(404).json({ message: "Equipment not found" })
@@ -707,7 +707,7 @@ router.post("/:id/notes", async (req, res) => {
     return
   }
 
-  const author = ensureUserExists(authorId)
+  const author = await ensureUserExists(authorId)
   if (!author) {
     res.status(400).json({ message: "Invalid authorId" })
     return
@@ -716,45 +716,45 @@ router.post("/:id/notes", async (req, res) => {
   const now = new Date().toISOString()
   const noteId = generateId()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(`
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(`
       INSERT INTO Note (id, body, authorId, targetType, equipmentUnitId, createdAt)
       VALUES (?, ?, ?, 'EQUIPMENT_UNIT', ?, ?)
     `).run(noteId, note, author.id, item.id, now)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, noteId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(generateId(), "NOTE_ADDED", author.id, item.id, noteId,
       `Field Note: ${note.length > 50 ? note.slice(0, 47) + "..." : note}`, now)
   })
 
-  runTransaction()
+  await runTransaction()
 
   res.status(201).json({ message: "Note added successfully" })
 })
 
 router.delete("/:id/service-logs", requireRole("admin"), async (req, res) => {
-  const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as { id: string } | undefined
+  const item = (await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id)) as { id: string } | undefined
   if (!item) { res.status(404).json({ message: "Equipment not found" }); return }
 
-  db.prepare("DELETE FROM MaintenanceRecord WHERE equipmentUnitId = ?").run(item.id)
+  await db.prepare("DELETE FROM MaintenanceRecord WHERE equipmentUnitId = ?").run(item.id)
   res.status(204).end()
 })
 
 router.delete("/:id/activity", requireRole("admin"), async (req, res) => {
-  const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as { id: string } | undefined
+  const item = (await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id)) as { id: string } | undefined
   if (!item) { res.status(404).json({ message: "Equipment not found" }); return }
 
-  db.prepare("DELETE FROM AuditLog WHERE equipmentUnitId = ?").run(item.id)
+  await db.prepare("DELETE FROM AuditLog WHERE equipmentUnitId = ?").run(item.id)
   res.status(204).end()
 })
 
 router.delete("/:id/tech-notes", requireRole("admin"), async (req, res) => {
-  const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as { id: string } | undefined
+  const item = (await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id)) as { id: string } | undefined
   if (!item) { res.status(404).json({ message: "Equipment not found" }); return }
 
-  db.prepare(`
+  await db.prepare(`
     DELETE FROM Note WHERE equipmentUnitId = ? AND authorId IN (
       SELECT id FROM User WHERE role IN ('MAINTENANCE', 'ADMIN')
     )
@@ -763,7 +763,7 @@ router.delete("/:id/tech-notes", requireRole("admin"), async (req, res) => {
 })
 
 router.get("/:id/activity", async (req, res) => {
-  const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id) as { id: string } | undefined
+  const item = (await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1").get(req.params.id)) as { id: string } | undefined
 
   if (!item) {
     res.status(404).json({ message: "Equipment not found" })
@@ -772,13 +772,13 @@ router.get("/:id/activity", async (req, res) => {
 
   const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 10
 
-  const logs = db.prepare(`
+  const logs = (await db.prepare(`
     SELECT id, equipmentUnitId, action, createdAt, actorId, message
     FROM AuditLog
     WHERE equipmentUnitId = ?
     ORDER BY createdAt DESC
     LIMIT ?
-  `).all(item.id, Number.isFinite(limit) ? limit : 10) as {
+  `).all(item.id, Number.isFinite(limit) ? limit : 10)) as {
     id: string; equipmentUnitId: string | null; action: AuditAction;
     createdAt: string; actorId: string | null; message: string
   }[]

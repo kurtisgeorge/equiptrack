@@ -41,9 +41,9 @@ export async function verifyPassword(user: AuthUser, password?: string): Promise
 
 export async function findUserByEmail(email: string): Promise<AuthUser | null> {
   try {
-    const user = db
+    const user = (await db
       .prepare("SELECT id, name, email, passwordHash, role FROM User WHERE email = ?")
-      .get(email.toLowerCase().trim()) as
+      .get(email.toLowerCase().trim())) as
       | { id: string; name: string; email: string; passwordHash: string | null; role: UserRole }
       | undefined
 
@@ -64,9 +64,9 @@ export async function findUserByEmail(email: string): Promise<AuthUser | null> {
 
 export async function findUserByRole(role: ApiRole): Promise<AuthUser | null> {
   try {
-    const user = db
+    const user = (await db
       .prepare("SELECT id, name, email, passwordHash, role FROM User WHERE role = ? ORDER BY createdAt ASC LIMIT 1")
-      .get(mapApiRoleToPrisma(role)) as
+      .get(mapApiRoleToPrisma(role))) as
       | { id: string; name: string; email: string; passwordHash: string | null; role: UserRole }
       | undefined
 

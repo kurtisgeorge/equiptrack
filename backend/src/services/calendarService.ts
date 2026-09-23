@@ -52,7 +52,7 @@ function mapRow(row: DbRow): CalendarEvent {
   }
 }
 
-export function listEvents(opts: { month?: string; userId: string; userRole: string }): CalendarEvent[] {
+export async function listEvents(opts: { month?: string; userId: string; userRole: string }): Promise<CalendarEvent[]> {
   const { month, userId, userRole } = opts
 
   let sql = `
@@ -70,7 +70,7 @@ export function listEvents(opts: { month?: string; userId: string; userRole: str
 
   sql += ' ORDER BY e.date ASC, e.startTime ASC'
 
-  const rows = db.prepare(sql).all(...params) as DbRow[]
+  const rows = (await db.prepare(sql).all(...params)) as DbRow[]
 
   return rows.filter((row) => {
     if (userRole === 'admin') return true
@@ -87,7 +87,7 @@ export function listEvents(opts: { month?: string; userId: string; userRole: str
   }).map(mapRow)
 }
 
-export function createEvent(data: {
+export async function createEvent(data: {
   title: string
   description?: string | null
   date: string
@@ -98,11 +98,11 @@ export function createEvent(data: {
   visibilityRoles?: string[]
   visibilityUserIds?: string[]
   createdById: string
-}): CalendarEvent {
+}): Promise<CalendarEvent> {
   const id = generateId()
   const now = new Date().toISOString()
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO CalendarEvent
       (id, title, description, date, startTime, endTime, color, visibilityType, visibilityRoles, visibilityUserIds, createdById, createdAt)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -121,14 +121,14 @@ export function createEvent(data: {
     now,
   )
 
-  const row = db.prepare(`
+  const row = (await db.prepare(`
     SELECT e.*, u.name AS createdByName FROM CalendarEvent e LEFT JOIN User u ON e.createdById = u.id WHERE e.id = ?
-  `).get(id) as DbRow
+  `).get(id)) as DbRow
 
   return mapRow(row)
 }
 
-export function updateEvent(id: string, data: {
+export async function updateEvent(id: string, data: {
   title?: string
   description?: string | null
   date?: string
@@ -138,11 +138,11 @@ export function updateEvent(id: string, data: {
   visibilityType?: VisibilityType
   visibilityRoles?: string[]
   visibilityUserIds?: string[]
-}): CalendarEvent | null {
-  const existing = db.prepare('SELECT * FROM CalendarEvent WHERE id = ?').get(id) as DbRow | undefined
+}): Promise<CalendarEvent | null> {
+  const existing = (await db.prepare('SELECT * FROM CalendarEvent WHERE id = ?').get(id)) as DbRow | undefined
   if (!existing) return null
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE CalendarEvent SET
       title = ?, description = ?, date = ?, startTime = ?, endTime = ?,
       color = ?, visibilityType = ?, visibilityRoles = ?, visibilityUserIds = ?
@@ -160,14 +160,14 @@ export function updateEvent(id: string, data: {
     id,
   )
 
-  const row = db.prepare(`
+  const row = (await db.prepare(`
     SELECT e.*, u.name AS createdByName FROM CalendarEvent e LEFT JOIN User u ON e.createdById = u.id WHERE e.id = ?
-  `).get(id) as DbRow
+  `).get(id)) as DbRow
 
   return mapRow(row)
 }
 
-export function deleteEvent(id: string): boolean {
-  const result = db.prepare('DELETE FROM CalendarEvent WHERE id = ?').run(id)
+export async function deleteEvent(id: string): Promise<boolean> {
+  const result = await db.prepare('DELETE FROM CalendarEvent WHERE id = ?').run(id)
   return result.changes > 0
 }

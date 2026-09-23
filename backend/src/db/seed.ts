@@ -1,7 +1,5 @@
-import Database from "better-sqlite3"
-import { readFileSync } from "fs"
-import { join } from "path"
-import { randomUUID, scryptSync, randomBytes } from "crypto"
+import { scryptSync, randomBytes } from "crypto"
+import db, { generateId } from "../lib/db"
 
 function hashPasswordSync(password: string): string {
   const salt = randomBytes(16).toString("hex")
@@ -10,16 +8,6 @@ function hashPasswordSync(password: string): string {
 }
 
 const DEFAULT_PASSWORD_HASH = hashPasswordSync("demo123")
-
-const dbPath = join(process.cwd(), "dev.db")
-const db = new Database(dbPath)
-
-const schemaSQL = readFileSync(join(__dirname, "schema.sql"), "utf-8")
-db.exec(schemaSQL)
-
-function generateId(): string {
-  return randomUUID()
-}
 
 const categories = [
   { name: "Earthmoving", code: "EARTH" },
@@ -403,7 +391,7 @@ function uniqueWithCounter(base: string, used: Set<string>) {
   return next
 }
 
-function main() {
+export async function seedDatabase() {
   const runSeed = db.transaction(() => {
     db.exec("DELETE FROM AuditLog")
     db.exec("DELETE FROM Note")
@@ -839,15 +827,19 @@ function main() {
     }
   })
 
-  runSeed()
+  await runSeed()
   console.log("Seed complete.")
 }
 
-try {
-  main()
-} catch (e) {
-  console.error(e)
-  process.exit(1)
-} finally {
-  db.close()
+// Only run automatically when invoked directly (`npm run seed`), not when
+// imported by server.ts to auto-seed an empty database on first boot.
+if (require.main === module) {
+  seedDatabase()
+    .catch((e) => {
+      console.error(e)
+      process.exitCode = 1
+    })
+    .finally(() => {
+      process.exit(process.exitCode ?? 0)
+    })
 }

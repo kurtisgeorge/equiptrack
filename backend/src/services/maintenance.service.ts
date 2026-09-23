@@ -34,27 +34,27 @@ type NotePayload = {
   issueReportId?: string
 }
 
-function validateNoteTarget(payload: NotePayload): boolean {
+async function validateNoteTarget(payload: NotePayload): Promise<boolean> {
   if (payload.targetType === "EQUIPMENT_UNIT") {
     if (!payload.equipmentUnitId) return false
-    const item = db.prepare("SELECT id FROM EquipmentUnit WHERE id = ?").get(payload.equipmentUnitId)
+    const item = await db.prepare("SELECT id FROM EquipmentUnit WHERE id = ?").get(payload.equipmentUnitId)
     return Boolean(item)
   }
 
   if (payload.targetType === "RENTAL") {
     if (!payload.rentalId) return false
-    const item = db.prepare("SELECT id FROM Rental WHERE id = ?").get(payload.rentalId)
+    const item = await db.prepare("SELECT id FROM Rental WHERE id = ?").get(payload.rentalId)
     return Boolean(item)
   }
 
   if (payload.targetType === "MAINTENANCE_RECORD") {
     if (!payload.maintenanceRecordId) return false
-    const item = db.prepare("SELECT id FROM MaintenanceRecord WHERE id = ?").get(payload.maintenanceRecordId)
+    const item = await db.prepare("SELECT id FROM MaintenanceRecord WHERE id = ?").get(payload.maintenanceRecordId)
     return Boolean(item)
   }
 
   if (!payload.issueReportId) return false
-  const item = db.prepare("SELECT id FROM IssueReport WHERE id = ?").get(payload.issueReportId)
+  const item = await db.prepare("SELECT id FROM IssueReport WHERE id = ?").get(payload.issueReportId)
   return Boolean(item)
 }
 
@@ -76,7 +76,7 @@ export async function getMaintenanceQueue(days: number): Promise<QueueItem[]> {
   const cutoff = new Date(today)
   cutoff.setDate(cutoff.getDate() + days)
 
-  const rows = db.prepare(`
+  const rows = (await db.prepare(`
     SELECT eu.id, eu.assetTag, eu.status, eu.lastMaintenanceAt, eu.nextMaintenanceDue,
            eu.notesSummary, et.name AS typeName, ec.name AS categoryName,
            et.defaultMaintenanceDays,
@@ -93,7 +93,7 @@ export async function getMaintenanceQueue(days: number): Promise<QueueItem[]> {
     ) ir ON ir.equipmentUnitId = eu.id
     WHERE eu.isActive = 1 AND eu.nextMaintenanceDue <= ?
     ORDER BY eu.nextMaintenanceDue ASC
-  `).all(cutoff.toISOString()) as UnitQueueRow[]
+  `).all(cutoff.toISOString())) as UnitQueueRow[]
 
   const rankToSeverity: Record<number, IssueSeverity> = { 1: "LOW", 2: "MEDIUM", 3: "HIGH", 4: "CRITICAL" }
 
@@ -137,7 +137,7 @@ export async function listIssueReports(input: { equipmentId?: string; status?: I
     equipmentTypeName: string | null
   }
 
-  const issues = db.prepare(
+  const issues = (await db.prepare(
     `SELECT ir.*,
             eu.assetTag AS equipmentAssetTag,
             et.name     AS equipmentTypeName
@@ -146,7 +146,7 @@ export async function listIssueReports(input: { equipmentId?: string; status?: I
      LEFT JOIN EquipmentType et ON et.id = eu.equipmentTypeId
      WHERE ${conditions.join(" AND ")}
      ORDER BY ir.reportedAt DESC`
-  ).all(...params) as JoinedIssueRow[]
+  ).all(...params)) as JoinedIssueRow[]
 
   return issues.map((issue) => ({
     id: issue.id,
@@ -164,34 +164,34 @@ export async function listIssueReports(input: { equipmentId?: string; status?: I
 }
 
 export async function createIssueReport(input: IssuePayload) {
-  const unit = db.prepare(
+  const unit = (await db.prepare(
     "SELECT id FROM EquipmentUnit WHERE id = ? AND isActive = 1"
-  ).get(input.equipmentId) as { id: string } | undefined
+  ).get(input.equipmentId)) as { id: string } | undefined
 
   if (!unit) return null
 
-  const user = db.prepare("SELECT id FROM User WHERE id = ?").get(input.reportedByUserId) as { id: string } | undefined
+  const user = (await db.prepare("SELECT id FROM User WHERE id = ?").get(input.reportedByUserId)) as { id: string } | undefined
   if (!user) return undefined
 
   const issueId = generateId()
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(`
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(`
       INSERT INTO IssueReport (id, equipmentUnitId, reportedById, title, description, severity, status, reportedAt)
       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?)
     `).run(issueId, unit.id, user.id, input.title, input.description, input.severity, now)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, issueReportId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(generateId(), "ISSUE_REPORTED", user.id, unit.id, issueId,
       `Issue reported [${input.severity}]: ${input.description}`, now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const issue = db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(issueId) as IssueRow
+  const issue = (await db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(issueId)) as IssueRow
 
   return {
     id: issue.id,
@@ -211,8 +211,8 @@ export async function updateIssueReportStatus(input: {
   status: IssueStatus
   actorUserId: string
 }) {
-  const issue = db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(input.issueId) as IssueRow | undefined
-  const actor = db.prepare("SELECT id FROM User WHERE id = ?").get(input.actorUserId) as { id: string } | undefined
+  const issue = (await db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(input.issueId)) as IssueRow | undefined
+  const actor = (await db.prepare("SELECT id FROM User WHERE id = ?").get(input.actorUserId)) as { id: string } | undefined
 
   if (!issue) return null
   if (!actor) return undefined
@@ -220,21 +220,21 @@ export async function updateIssueReportStatus(input: {
   const now = new Date().toISOString()
   const resolvedAt = input.status === "RESOLVED" || input.status === "CLOSED" ? now : null
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(
       "UPDATE IssueReport SET status = ?, resolvedAt = ? WHERE id = ?"
     ).run(input.status, resolvedAt, issue.id)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, issueReportId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(generateId(), "STATUS_CHANGED", actor.id, issue.equipmentUnitId, issue.id,
       `Issue status changed to ${input.status}`, now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const updated = db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(issue.id) as IssueRow
+  const updated = (await db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(issue.id)) as IssueRow
 
   return {
     id: updated.id,
@@ -284,9 +284,9 @@ export async function listNotes(input: {
     params.push(...input.authorRoles)
   }
 
-  const notes = db.prepare(
+  const notes = (await db.prepare(
     `SELECT n.* FROM Note n ${joinClause} WHERE ${conditions.join(" AND ")} ORDER BY n.createdAt DESC`
-  ).all(...params) as NoteRow[]
+  ).all(...params)) as NoteRow[]
 
   return notes.map((note) => ({
     id: note.id,
@@ -315,17 +315,17 @@ function getAuditReferenceKey(targetType: NoteTargetType): "equipmentUnitId" | "
 }
 
 export async function createNote(input: NotePayload) {
-  const author = db.prepare("SELECT id FROM User WHERE id = ?").get(input.authorId) as { id: string } | undefined
+  const author = (await db.prepare("SELECT id FROM User WHERE id = ?").get(input.authorId)) as { id: string } | undefined
   if (!author) return undefined
 
-  const hasValidTarget = validateNoteTarget(input)
+  const hasValidTarget = await validateNoteTarget(input)
   if (!hasValidTarget) return null
 
   const noteId = generateId()
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(`
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(`
       INSERT INTO Note (id, authorId, body, targetType, equipmentUnitId, rentalId, maintenanceRecordId, issueReportId, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(noteId, input.authorId, input.body, input.targetType,
@@ -342,15 +342,15 @@ export async function createNote(input: NotePayload) {
       ? `Technician Note: ${input.body}`
       : input.body
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, ${referenceKey}, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(generateId(), "NOTE_ADDED", author.id, refValue ?? null, auditMessage, now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const created = db.prepare("SELECT * FROM Note WHERE id = ?").get(noteId) as NoteRow
+  const created = (await db.prepare("SELECT * FROM Note WHERE id = ?").get(noteId)) as NoteRow
 
   return {
     id: created.id,
@@ -366,16 +366,16 @@ export async function createNote(input: NotePayload) {
 }
 
 export async function deleteNote(noteId: string, actorUserId: string) {
-  const note = db.prepare("SELECT * FROM Note WHERE id = ?").get(noteId) as NoteRow | undefined
-  const actor = db.prepare("SELECT id, name, role FROM User WHERE id = ?").get(actorUserId) as
+  const note = (await db.prepare("SELECT * FROM Note WHERE id = ?").get(noteId)) as NoteRow | undefined
+  const actor = await db.prepare("SELECT id, name, role FROM User WHERE id = ?").get(actorUserId) as
     { id: string; name: string; role: UserRole } | undefined
 
   if (!note) return null
   if (!actor || (actor.role !== "ADMIN" && actor.role !== "MAINTENANCE")) return undefined
 
-  const runTransaction = db.transaction(() => {
-    db.prepare("DELETE FROM Note WHERE id = ?").run(noteId)
-    db.prepare(`
+  const runTransaction = db.transaction(async () => {
+    await db.prepare("DELETE FROM Note WHERE id = ?").run(noteId)
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, rentalId, maintenanceRecordId, issueReportId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(generateId(), "DELETED", actor.id,
@@ -383,23 +383,23 @@ export async function deleteNote(noteId: string, actorUserId: string) {
       `Note deleted by ${actor.name}`, new Date().toISOString())
   })
 
-  runTransaction()
+  await runTransaction()
   return true
 }
 
 export async function markServiced(unitId: string, performedByUserId: string, nextServiceDue?: string) {
-  const unit = db.prepare(`
+  const unit = (await db.prepare(`
     SELECT eu.*, et.defaultMaintenanceDays
     FROM EquipmentUnit eu
     JOIN EquipmentType et ON eu.equipmentTypeId = et.id
     WHERE eu.id = ?
-  `).get(unitId) as (
+  `).get(unitId)) as (
     { id: string; equipmentTypeId: string; status: string; defaultMaintenanceDays: number | null }
   ) | undefined
 
   if (!unit) return null
 
-  const performer = db.prepare("SELECT id FROM User WHERE id = ?").get(performedByUserId) as { id: string } | undefined
+  const performer = (await db.prepare("SELECT id FROM User WHERE id = ?").get(performedByUserId)) as { id: string } | undefined
   if (!performer) return undefined
 
   const now = new Date()
@@ -415,27 +415,27 @@ export async function markServiced(unitId: string, performedByUserId: string, ne
   const nowIso = now.toISOString()
   const nextDueIso = nextDue ? nextDue.toISOString() : null
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(`
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(`
       UPDATE EquipmentUnit SET lastMaintenanceAt = ?, nextMaintenanceDue = ?, status = 'AVAILABLE'
       WHERE id = ?
     `).run(nowIso, nextDueIso, unit.id)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO MaintenanceRecord (id, equipmentUnitId, technicianId, status, trigger, title, description, completedAt, nextDueAt, createdAt, updatedAt)
       VALUES (?, ?, ?, 'COMPLETED', 'ROUTINE', 'Service completed', 'Marked serviced via automated workflow', ?, ?, ?, ?)
     `).run(generateId(), unit.id, performer.id, nowIso, nextDueIso, nowIso, nowIso)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(generateId(), "MAINTENANCE_COMPLETED", performer.id, unit.id,
       "Service completed and status restored to AVAILABLE", nowIso)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const updated = db.prepare(`
+  const updated = (await db.prepare(`
     SELECT eu.id, eu.assetTag, eu.serialNumber, eu.equipmentTypeId, eu.locationId,
            eu.status, eu.year, eu.inServiceDate, eu.nextMaintenanceDue, eu.lastMaintenanceAt,
            eu.notesSummary, eu.isActive, eu.createdAt,
@@ -445,7 +445,7 @@ export async function markServiced(unitId: string, performedByUserId: string, ne
     JOIN EquipmentType et ON eu.equipmentTypeId = et.id
     JOIN EquipmentCategory ec ON et.categoryId = ec.id
     WHERE eu.id = ?
-  `).get(unit.id) as any
+  `).get(unit.id)) as any
 
   return updated
 }
@@ -454,51 +454,51 @@ export async function resolveIssueReport(input: {
   issueId: string
   actorUserId: string
 }) {
-  const issue = db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(input.issueId) as IssueRow | undefined
-  const actor = db.prepare("SELECT id FROM User WHERE id = ?").get(input.actorUserId) as { id: string } | undefined
+  const issue = (await db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(input.issueId)) as IssueRow | undefined
+  const actor = (await db.prepare("SELECT id FROM User WHERE id = ?").get(input.actorUserId)) as { id: string } | undefined
 
   if (!issue) return null
   if (!actor) return undefined
 
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(
       "UPDATE IssueReport SET status = 'RESOLVED', resolvedAt = ? WHERE id = ?"
     ).run(now, issue.id)
 
-    const unit = db.prepare(
+    const unit = (await db.prepare(
       "SELECT id, status FROM EquipmentUnit WHERE id = ?"
-    ).get(issue.equipmentUnitId) as { id: string; status: string } | undefined
+    ).get(issue.equipmentUnitId)) as { id: string; status: string } | undefined
 
     if (unit && unit.status === "OUT_OF_SERVICE") {
-      db.prepare("UPDATE EquipmentUnit SET status = 'AVAILABLE' WHERE id = ?").run(unit.id)
+      await db.prepare("UPDATE EquipmentUnit SET status = 'AVAILABLE' WHERE id = ?").run(unit.id)
 
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, message, createdAt)
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(generateId(), "STATUS_CHANGED", actor.id, unit.id,
         "Status restored to AVAILABLE after issue resolution", now)
     }
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, issueReportId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(generateId(), "UPDATED", actor.id, issue.equipmentUnitId, issue.id,
       "Issue resolved and dismissed", now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  return db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(issue.id) as IssueRow
+  return (await db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(issue.id)) as IssueRow
 }
 
 export async function moveToMaintenance(input: {
   issueId: string
   actorUserId: string
 }) {
-  const issue = db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(input.issueId) as IssueRow | undefined
-  const actor = db.prepare("SELECT id FROM User WHERE id = ?").get(input.actorUserId) as { id: string } | undefined
+  const issue = (await db.prepare("SELECT * FROM IssueReport WHERE id = ?").get(input.issueId)) as IssueRow | undefined
+  const actor = (await db.prepare("SELECT id FROM User WHERE id = ?").get(input.actorUserId)) as { id: string } | undefined
 
   if (!issue) return null
   if (!actor) return undefined
@@ -506,25 +506,25 @@ export async function moveToMaintenance(input: {
   const now = new Date().toISOString()
   const recordId = generateId()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare("UPDATE IssueReport SET status = 'IN_PROGRESS' WHERE id = ?").run(issue.id)
+  const runTransaction = db.transaction(async () => {
+    await db.prepare("UPDATE IssueReport SET status = 'IN_PROGRESS' WHERE id = ?").run(issue.id)
 
-    db.prepare("UPDATE EquipmentUnit SET status = 'IN_MAINTENANCE' WHERE id = ?").run(issue.equipmentUnitId)
+    await db.prepare("UPDATE EquipmentUnit SET status = 'IN_MAINTENANCE' WHERE id = ?").run(issue.equipmentUnitId)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO MaintenanceRecord (id, equipmentUnitId, issueReportId, technicianId, status, trigger, title, description, startedAt, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, 'IN_PROGRESS', 'ISSUE_REPORTED', ?, ?, ?, ?, ?)
     `).run(recordId, issue.equipmentUnitId, issue.id, actor.id,
       `Maintenance: ${issue.title}`, issue.description, now, now, now)
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, equipmentUnitId, maintenanceRecordId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(generateId(), "MAINTENANCE_OPENED", actor.id, issue.equipmentUnitId, recordId,
       `Maintenance started from issue: ${issue.title}`, now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  return db.prepare("SELECT * FROM MaintenanceRecord WHERE id = ?").get(recordId)
+  return await db.prepare("SELECT * FROM MaintenanceRecord WHERE id = ?").get(recordId)
 }

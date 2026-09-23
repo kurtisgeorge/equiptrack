@@ -14,15 +14,17 @@ Shared across roles: a scheduling calendar, QR code generation and scanning (cam
 
 **Frontend:** React 19, TypeScript, Vite, Tailwind CSS, Radix UI / MUI, TanStack Query and TanStack Table, React Hook Form, React Router
 
-**Backend:** Node.js, Express 5, TypeScript, SQLite (better-sqlite3), scrypt password hashing, role-based route guards
+**Backend:** Node.js, Express 5, TypeScript, SQLite/libSQL (`@libsql/client`), scrypt password hashing, role-based route guards
+
+Deployed on Vercel: the frontend builds as a static SPA and the Express API runs as a single serverless function (`api/index.ts`). The database defaults to a local SQLite file with no setup required — on Vercel that file lives in `/tmp`, which is wiped on cold starts and isn't shared across concurrent instances, so demo data resets periodically by design. Set `TURSO_DATABASE_URL` (+ `TURSO_AUTH_TOKEN`) to a real [Turso](https://turso.tech) database instead if you want data to persist reliably — same code, just point it at a hosted database.
 
 ## Running Locally
 
-Requires Node.js 20+.
+Requires Node.js 20+ (uses `process.loadEnvFile`, added in Node 20.12/21.7).
 
 ```bash
 npm run install:all          # installs root, backend, and frontend dependencies
-npm --prefix backend run seed   # creates backend/dev.db with ~1,000 equipment units and demo data
+npm --prefix backend run seed   # creates backend/dev.db (SQLite file) with ~1,000 equipment units and demo data
 npm run dev                  # backend on :4000, frontend on :5173
 ```
 
@@ -50,8 +52,11 @@ npm start       # serves the API and the built frontend from one Express server
 ## Project Structure
 
 ```
+api/
+  index.ts        Vercel serverless entry point — delegates to backend/src/server.ts
 backend/
   src/
+    lib/db.ts     database connection + query helpers (SQLite file or Turso)
     db/           schema.sql, seed script, enum and row mappers
     routes/       auth, equipment, rentals, maintenance, dashboard, calendar, users
     services/     rental lifecycle, availability, maintenance scheduling

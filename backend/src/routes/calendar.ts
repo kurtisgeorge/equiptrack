@@ -4,10 +4,10 @@ import { requireRole } from '../middleware/requireRole'
 
 const router = Router()
 
-router.get('/events', (req: any, res) => {
+router.get('/events', async (req: any, res) => {
   if (!req.user) return res.status(401).json({ message: 'Unauthorized' })
   const month = typeof req.query.month === 'string' ? req.query.month : undefined
-  const events = calendarService.listEvents({
+  const events = await calendarService.listEvents({
     month,
     userId: req.user.id,
     userRole: req.user.role,
@@ -15,13 +15,13 @@ router.get('/events', (req: any, res) => {
   res.json(events)
 })
 
-router.post('/events', requireRole('admin'), (req: any, res) => {
+router.post('/events', requireRole('admin'), async (req: any, res) => {
   const { title, description, date, startTime, endTime, color, visibilityType, visibilityRoles, visibilityUserIds } = req.body
   if (!title || typeof title !== 'string') return res.status(400).json({ message: 'title is required' })
   if (!date || typeof date !== 'string') return res.status(400).json({ message: 'date is required' })
   if (!visibilityType) return res.status(400).json({ message: 'visibilityType is required' })
   try {
-    const event = calendarService.createEvent({
+    const event = await calendarService.createEvent({
       title, description, date, startTime, endTime, color,
       visibilityType, visibilityRoles, visibilityUserIds,
       createdById: req.user.id,
@@ -33,14 +33,14 @@ router.post('/events', requireRole('admin'), (req: any, res) => {
   }
 })
 
-router.put('/events/:id', requireRole('admin'), (req: any, res) => {
-  const event = calendarService.updateEvent(req.params.id, req.body)
+router.put('/events/:id', requireRole('admin'), async (req: any, res) => {
+  const event = await calendarService.updateEvent(req.params.id, req.body)
   if (!event) return res.status(404).json({ message: 'Event not found' })
   res.json(event)
 })
 
-router.delete('/events/:id', requireRole('admin'), (req: any, res) => {
-  const deleted = calendarService.deleteEvent(req.params.id)
+router.delete('/events/:id', requireRole('admin'), async (req: any, res) => {
+  const deleted = await calendarService.deleteEvent(req.params.id)
   if (!deleted) return res.status(404).json({ message: 'Event not found' })
   res.status(204).end()
 })

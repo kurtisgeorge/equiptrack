@@ -44,7 +44,7 @@ export async function attachUser(req: Request, _res: Response, next: NextFunctio
     return
   }
 
-  const user = db.prepare("SELECT id, role FROM User WHERE id = ?").get(userId) as
+  const user = await db.prepare("SELECT id, role FROM User WHERE id = ?").get(userId) as
     | { id: string; role: UserRole }
     | undefined
 

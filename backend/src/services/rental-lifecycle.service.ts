@@ -124,22 +124,22 @@ export class RentalLifecycleError extends Error {
   }
 }
 
-function loadRentalWithRelations(rentalId: string) {
-  const rental = db.prepare("SELECT * FROM Rental WHERE id = ?").get(rentalId) as RentalRow | undefined
+async function loadRentalWithRelations(rentalId: string) {
+  const rental = (await db.prepare("SELECT * FROM Rental WHERE id = ?").get(rentalId)) as RentalRow | undefined
   if (!rental) return undefined
 
-  const requester = db.prepare("SELECT id, name, email, role FROM User WHERE id = ?").get(rental.requesterId) as UserRow
+  const requester = (await db.prepare("SELECT id, name, email, role FROM User WHERE id = ?").get(rental.requesterId)) as UserRow
 
   let equipmentTypeName = "Equipment"
   if (rental.equipmentUnitId) {
-    const row = db.prepare(`
+    const row = (await db.prepare(`
       SELECT et.name FROM EquipmentUnit eu
       JOIN EquipmentType et ON eu.equipmentTypeId = et.id
       WHERE eu.id = ?
-    `).get(rental.equipmentUnitId) as { name: string } | undefined
+    `).get(rental.equipmentUnitId)) as { name: string } | undefined
     if (row) equipmentTypeName = row.name
   } else {
-    const row = db.prepare("SELECT name FROM EquipmentType WHERE id = ?").get(rental.equipmentTypeId) as { name: string } | undefined
+    const row = (await db.prepare("SELECT name FROM EquipmentType WHERE id = ?").get(rental.equipmentTypeId)) as { name: string } | undefined
     if (row) equipmentTypeName = row.name
   }
 
@@ -249,10 +249,10 @@ async function resolveRequestedEquipment(
     throw new RentalLifecycleError("INVALID_INPUT", "assignedEquipmentId is required for approval", 400)
   }
 
-  const unit = db.prepare(`
+  const unit = (await db.prepare(`
     SELECT id, status, nextMaintenanceDue, equipmentTypeId, locationId
     FROM EquipmentUnit WHERE id = ? AND isActive = 1
-  `).get(equipmentId) as {
+  `).get(equipmentId)) as {
     id: string; status: EquipmentStatus; nextMaintenanceDue: string | null;
     equipmentTypeId: string; locationId: string
   } | undefined
@@ -306,15 +306,15 @@ async function resolveRequestedEquipment(
   return { ...unit, nextStatus: unit.status }
 }
 
-function releaseEquipmentIfNeeded(
+async function releaseEquipmentIfNeeded(
   rentalId: string,
   equipmentUnitId: string | null,
 ) {
   if (!equipmentUnitId) return
 
-  const equipment = db.prepare(
+  const equipment = (await db.prepare(
     "SELECT id, status FROM EquipmentUnit WHERE id = ?"
-  ).get(equipmentUnitId) as { id: string; status: EquipmentStatus } | undefined
+  ).get(equipmentUnitId)) as { id: string; status: EquipmentStatus } | undefined
 
   if (!equipment) return
 
@@ -323,15 +323,15 @@ function releaseEquipmentIfNeeded(
   }
 
   const placeholders = OCCUPYING_RENTAL_STATUSES.map(() => "?").join(",")
-  const row = db.prepare(
+  const row = (await db.prepare(
     `SELECT COUNT(*) as count FROM Rental WHERE id != ? AND equipmentUnitId = ? AND status IN (${placeholders})`
-  ).get(rentalId, equipmentUnitId, ...OCCUPYING_RENTAL_STATUSES) as { count: number }
+  ).get(rentalId, equipmentUnitId, ...OCCUPYING_RENTAL_STATUSES)) as { count: number }
 
   if (row.count > 0) {
     return
   }
 
-  db.prepare("UPDATE EquipmentUnit SET status = ? WHERE id = ?").run(EquipmentStatus.AVAILABLE, equipmentUnitId)
+  await db.prepare("UPDATE EquipmentUnit SET status = ? WHERE id = ?").run(EquipmentStatus.AVAILABLE, equipmentUnitId)
 }
 
 function getAuditEntry(status: RentalStatus, rejectionReason?: string): { action: AuditAction; message: string } {
@@ -356,10 +356,10 @@ export async function createRentalRequest(input: CreateRentalInput): Promise<Api
     throw new RentalLifecycleError("INVALID_INPUT", "startDate/endDate are invalid", 400)
   }
 
-  const user = db.prepare("SELECT id, name, email, role FROM User WHERE id = ?").get(input.requestedByUserId) as UserRow | undefined
-  const equipment = db.prepare(
+  const user = (await db.prepare("SELECT id, name, email, role FROM User WHERE id = ?").get(input.requestedByUserId)) as UserRow | undefined
+  const equipment = (await db.prepare(
     "SELECT id, equipmentTypeId, locationId FROM EquipmentUnit WHERE id = ? AND isActive = 1"
-  ).get(input.equipmentId) as { id: string; equipmentTypeId: string; locationId: string } | undefined
+  ).get(input.equipmentId)) as { id: string; equipmentTypeId: string; locationId: string } | undefined
 
   if (!user) throw new RentalLifecycleError("NOT_FOUND", "User not found", 404)
   if (!equipment) throw new RentalLifecycleError("NOT_FOUND", "Equipment not found", 404)
@@ -379,8 +379,8 @@ export async function createRentalRequest(input: CreateRentalInput): Promise<Api
   const rentalId = generateId()
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(`
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(`
       INSERT INTO Rental (id, equipmentUnitId, equipmentTypeId, requesterId, locationId,
         status, reason, requestedStart, requestedEnd, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -390,15 +390,15 @@ export async function createRentalRequest(input: CreateRentalInput): Promise<Api
       requestedStart.toISOString(), requestedEnd.toISOString(), now, now
     )
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, rentalId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(generateId(), "REQUEST_SUBMITTED", user.id, rentalId, equipment.id, "Rental request submitted", now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const loaded = loadRentalWithRelations(rentalId)
+  const loaded = await loadRentalWithRelations(rentalId)
   if (!loaded) throw new RentalLifecycleError("NOT_FOUND", "Rental creation failed", 500)
 
   return toApiRental(loaded)
@@ -406,10 +406,10 @@ export async function createRentalRequest(input: CreateRentalInput): Promise<Api
 
 export async function transitionRentalStatus(input: TransitionRentalInput): Promise<ApiRental> {
   const targetStatus = parseRequestedStatus(input.requestedStatus)
-  const actor = db.prepare("SELECT id, name, email, role FROM User WHERE id = ?").get(input.actorUserId) as UserRow | undefined
+  const actor = (await db.prepare("SELECT id, name, email, role FROM User WHERE id = ?").get(input.actorUserId)) as UserRow | undefined
   if (!actor) throw new RentalLifecycleError("NOT_FOUND", "actorUserId is invalid", 404)
 
-  const rental = db.prepare("SELECT * FROM Rental WHERE id = ?").get(input.rentalId) as RentalRow | undefined
+  const rental = (await db.prepare("SELECT * FROM Rental WHERE id = ?").get(input.rentalId)) as RentalRow | undefined
   if (!rental) throw new RentalLifecycleError("NOT_FOUND", "Rental not found", 404)
 
   if (!canTransition(rental.status, targetStatus)) {
@@ -439,14 +439,14 @@ export async function transitionRentalStatus(input: TransitionRentalInput): Prom
     locationId = unit.locationId
 
     if (unit.status !== unit.nextStatus) {
-      db.prepare("UPDATE EquipmentUnit SET status = ? WHERE id = ?").run(unit.nextStatus, unit.id)
+      await db.prepare("UPDATE EquipmentUnit SET status = ? WHERE id = ?").run(unit.nextStatus, unit.id)
     }
   }
 
   const now = new Date().toISOString()
 
-  const runTransaction = db.transaction(() => {
-    db.prepare(`
+  const runTransaction = db.transaction(async () => {
+    await db.prepare(`
       UPDATE Rental SET
         status = ?, equipmentUnitId = ?, equipmentTypeId = ?, locationId = ?,
         approverId = ?, approvedStart = ?, approvedEnd = ?,
@@ -472,19 +472,19 @@ export async function transitionRentalStatus(input: TransitionRentalInput): Prom
     )
 
     if (targetStatus === "RETURNED" || targetStatus === "REJECTED" || targetStatus === "CANCELLED") {
-      releaseEquipmentIfNeeded(rental.id, equipmentUnitId)
+      await releaseEquipmentIfNeeded(rental.id, equipmentUnitId)
     }
 
     const audit = getAuditEntry(targetStatus, input.rejectionReason)
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO AuditLog (id, action, actorId, rentalId, equipmentUnitId, message, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(generateId(), audit.action, actor.id, rental.id, equipmentUnitId, audit.message, now)
   })
 
-  runTransaction()
+  await runTransaction()
 
-  const loaded = loadRentalWithRelations(rental.id)
+  const loaded = await loadRentalWithRelations(rental.id)
   if (!loaded) throw new RentalLifecycleError("NOT_FOUND", "Rental not found after update", 500)
 
   return toApiRental(loaded)

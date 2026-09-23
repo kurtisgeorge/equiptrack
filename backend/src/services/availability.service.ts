@@ -180,7 +180,7 @@ async function loadUnitsForAvailability(input: {
     params.push(input.equipmentUnitId)
   }
 
-  const unitRows = db.prepare(`
+  const unitRows = (await db.prepare(`
     SELECT eu.id, eu.assetTag, eu.status, eu.equipmentTypeId, eu.locationId,
            eu.nextMaintenanceDue, et.name AS typeName, ec.name AS categoryName
     FROM EquipmentUnit eu
@@ -188,7 +188,7 @@ async function loadUnitsForAvailability(input: {
     JOIN EquipmentCategory ec ON et.categoryId = ec.id
     WHERE ${conditions.join(" AND ")}
     ORDER BY et.name ASC, eu.assetTag ASC
-  `).all(...params) as UnitRow[]
+  `).all(...params)) as UnitRow[]
 
   if (unitRows.length === 0) return []
 
@@ -213,11 +213,11 @@ async function loadUnitsForAvailability(input: {
     rentalParams.push(input.excludeRentalId)
   }
 
-  const rentalRows = db.prepare(`
+  const rentalRows = (await db.prepare(`
     SELECT r.id, r.requestedStart, r.requestedEnd, r.status, r.equipmentUnitId
     FROM Rental r
     WHERE ${rentalConditions.join(" AND ")}
-  `).all(...rentalParams) as RentalRow[]
+  `).all(...rentalParams)) as RentalRow[]
 
   const rentalsByUnit = new Map<string, UnitOverlapRental[]>()
   for (const r of rentalRows) {
@@ -502,17 +502,17 @@ export async function checkOverlap(unitId: string, start: Date, end: Date, exclu
     params.push(excludeRentalId)
   }
 
-  const row = db.prepare(
+  const row = (await db.prepare(
     `SELECT COUNT(*) as count FROM Rental WHERE ${conditions.join(" AND ")}`
-  ).get(...params) as { count: number }
+  ).get(...params)) as { count: number }
 
   return row.count > 0
 }
 
 export async function validateMaintenanceWindow(unitId: string, durationDays: number, startDate: Date = new Date()): Promise<boolean> {
-  const unit = db.prepare(
+  const unit = (await db.prepare(
     "SELECT nextMaintenanceDue, status FROM EquipmentUnit WHERE id = ?"
-  ).get(unitId) as { nextMaintenanceDue: string | null; status: EquipmentStatus } | undefined
+  ).get(unitId)) as { nextMaintenanceDue: string | null; status: EquipmentStatus } | undefined
 
   if (!unit) return false
 

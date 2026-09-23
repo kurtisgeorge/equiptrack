@@ -11,7 +11,7 @@ router.get("/admin-summary", async (req, res) => {
     maintenance: 0,
   }
 
-  const units = db.prepare("SELECT status FROM EquipmentUnit").all() as { status: string }[]
+  const units = (await db.prepare("SELECT status FROM EquipmentUnit").all()) as { status: string }[]
 
   for (const unit of units) {
     if (unit.status === EquipmentStatus.AVAILABLE) {
@@ -31,13 +31,13 @@ router.get("/admin-summary", async (req, res) => {
     byStatus.maintenance++
   }
 
-  const pendingRow = db.prepare(
+  const pendingRow = (await db.prepare(
     "SELECT COUNT(*) as count FROM Rental WHERE status IN (?, ?, ?)"
-  ).get(RentalStatus.PENDING, RentalStatus.APPROVED, RentalStatus.RESERVED) as { count: number }
+  ).get(RentalStatus.PENDING, RentalStatus.APPROVED, RentalStatus.RESERVED)) as { count: number }
 
-  const activeRow = db.prepare(
+  const activeRow = (await db.prepare(
     "SELECT COUNT(*) as count FROM Rental WHERE status IN (?, ?)"
-  ).get(RentalStatus.CHECKED_OUT, RentalStatus.OVERDUE) as { count: number }
+  ).get(RentalStatus.CHECKED_OUT, RentalStatus.OVERDUE)) as { count: number }
 
   res.json({
     totalEquipment: units.length,
@@ -50,17 +50,17 @@ router.get("/admin-summary", async (req, res) => {
 router.get("/field-summary", async (req, res) => {
   const userId = typeof req.query.userId === "string" ? req.query.userId : ""
 
-  const pendingRow = db.prepare(
+  const pendingRow = (await db.prepare(
     "SELECT COUNT(*) as count FROM Rental WHERE requesterId = ? AND status IN (?, ?, ?)"
-  ).get(userId, RentalStatus.PENDING, RentalStatus.APPROVED, RentalStatus.RESERVED) as { count: number }
+  ).get(userId, RentalStatus.PENDING, RentalStatus.APPROVED, RentalStatus.RESERVED)) as { count: number }
 
-  const activeRow = db.prepare(
+  const activeRow = (await db.prepare(
     "SELECT COUNT(*) as count FROM Rental WHERE requesterId = ? AND status IN (?, ?)"
-  ).get(userId, RentalStatus.CHECKED_OUT, RentalStatus.OVERDUE) as { count: number }
+  ).get(userId, RentalStatus.CHECKED_OUT, RentalStatus.OVERDUE)) as { count: number }
 
-  const recommended = db.prepare(
+  const recommended = (await db.prepare(
     "SELECT id FROM EquipmentUnit WHERE status = ? AND isActive = 1 ORDER BY createdAt DESC LIMIT 3"
-  ).all(EquipmentStatus.AVAILABLE) as { id: string }[]
+  ).all(EquipmentStatus.AVAILABLE)) as { id: string }[]
 
   res.json({
     myPendingRequests: pendingRow.count,
@@ -70,7 +70,7 @@ router.get("/field-summary", async (req, res) => {
 })
 
 router.get("/maintenance-summary", async (req, res) => {
-  const units = db.prepare("SELECT status FROM EquipmentUnit").all() as { status: string }[]
+  const units = (await db.prepare("SELECT status FROM EquipmentUnit").all()) as { status: string }[]
 
   let maintenanceEquipment = 0
   let availableEquipment = 0
