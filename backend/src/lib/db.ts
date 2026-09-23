@@ -145,6 +145,15 @@ function transaction<T>(fn: (() => T) | (() => Promise<T>)): () => Promise<T> {
 // ── Schema + one-time migrations ───────────────────────────────────────────
 
 async function init(): Promise<void> {
+  // WAL journaling is a local-file concept only — Turso's managed remote
+  // storage rejects the pragma outright (SQL_PARSE_ERROR), so it's issued
+  // here (not from schema.sql) and only for a local `file:` connection.
+  if (url.startsWith("file:")) {
+    try {
+      await client.execute("PRAGMA journal_mode=WAL")
+    } catch { /* not supported on this connection — fine to skip */ }
+  }
+
   const schemaSQL = readFileSync(join(__dirname, "..", "db", "schema.sql"), "utf-8")
   await client.executeMultiple(schemaSQL)
 
